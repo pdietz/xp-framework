@@ -292,7 +292,7 @@
           if (!$this->children) return $xml."/>\n";
           $xml.= '>';
         } else {
-          $xml.= '>'.($indent ? "\n  ".$inset.$content : trim($content));
+          $xml.= '>'.($indent ? "\n  ".$inset.$content : $content);
         }
 
         if ($this->children) {

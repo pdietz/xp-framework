@@ -226,7 +226,7 @@
       // Debugging
       if (($flags & WebDebug::XML) && isset($response->document)) {
         flush();
-        echo '<xmp>', $response->document->getDeclaration()."\n".$response->document->getSource(0), '</xmp>';
+        echo '<xmp>', $response->document->getDeclaration()."\n".$response->document->getSource(INDENT_DEFAULT), '</xmp>';
       }
       
       if (($flags & WebDebug::ERRORS)) {
