@@ -79,15 +79,16 @@
       // Create route from @webmethod annotation
       $route= $this->addRoute(new RestRoute(
         $webmethod['verb'],
-        $base.rtrim($webmethod['path'], '/'),
+        $base.(isset($webmethod['path']) ? rtrim($webmethod['path'], '/') : ''),
         $method,
         isset($webmethod['accepts']) ? (array)$webmethod['accepts'] : NULL,
         isset($webmethod['returns']) ? (array)$webmethod['returns'] : NULL
       ));
 
       // Add route parameters using parameter annotations
-      foreach ($method->getAnnotations() as $annotation => $value) {
-        if (2 === sscanf($annotation, '$%[^:]: %s', $param, $source)) {
+      foreach ($method->getParameters() as $parameter) {
+        $param= $parameter->getName();
+        foreach ($parameter->getAnnotations() as $source => $value) {
           $route->addParam($param, new RestParamSource(
             $value ? $value : $param,
             ParamReader::forName($source)

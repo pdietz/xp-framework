@@ -12,7 +12,7 @@
    * @see  xp://net.xp_framework.unittest.webservices.rest.srv.RestDefaultRouterTest
    */
   #[@webservice(path= '/implicit/')]
-  class ImplicitGreetingHandler extends TestCase {
+  class ImplicitGreetingHandler extends Object {
     protected $fixture= NULL;
 
     /**
@@ -37,6 +37,16 @@
     public function greet_posted($payload) {
       sscanf($payload, '%s %s', $greeting, $name);
       return $this->greet($name, $greeting);
+    }
+
+    /**
+     * Greet the world
+     * 
+     * @return  string
+     */
+    #[@webmethod(verb= 'GET')]
+    public function hello_world() {
+      return $this->greet('World');
     }
   }
 ?>
