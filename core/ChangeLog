@@ -33,6 +33,8 @@ Heads up!
 
 RFCs
 ~~~~
+- Implemented RFC #0220: Modules - Classpath meta information & initializers
+  (friebe)
 - Implemented RFC #0210: Separate contrib & framework versions
   (friebe)
 - Implemented RFC #0260: XP 5.9 as default branch
@@ -81,6 +83,11 @@ Features
 Version 5.8.?, released ????-??-??
 ----------------------------------
 Git commit: ?????
+
+
+Version 5.8.11, released 2013-01-30
+-----------------------------------
+Git commit: 87c014945c3447249345b50a0ebf77a471624e32
 
 RFCs
 ~~~~
