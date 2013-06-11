@@ -79,12 +79,45 @@
     }
 
     /**
+     * Test nvarchar type
+     *
+     */
+    #[@test]
+    public function selectNVarchar() {
+      $this->assertEquals('Test', $this->db()->query('select cast("Test" as nvarchar) as value')->next('value'));
+    }
+
+    /**
+     * Test nvarchar type
+     *
+     */
+    #[@test]
+    public function selectNVarchars() {
+      $this->assertEquals(
+        array('one' => 'Test1', 'two' => 'Test2'),
+        $this->db()->query('select cast("Test1" as nvarchar) as one, cast("Test2" as nvarchar) as two')->next()
+      );
+    }
+
+    /**
      * Test SQL_VARIANT type
      *
      */
     #[@test]
     public function selectVarcharVariant() {
       $this->assertEquals('Test', $this->db()->query('select cast("Test" as sql_variant) as value')->next('value'));
+    }
+
+    /**
+     * Test SQL_VARIANT type
+     *
+     */
+    #[@test]
+    public function selectVarcharVariants() {
+      $this->assertEquals(
+        array('one' => 'Test1', 'two' => 'Test2'), 
+        $this->db()->query('select cast("Test1" as sql_variant) as one, cast("Test2" as sql_variant) as two')->next()
+      );
     }
 
     /**
@@ -106,6 +139,18 @@
     }
 
     /**
+     * Test SQL_VARIANT type. Ensure we don't read too many, and just enough bytes:)
+     *
+     */
+    #[@test]
+    public function selectNumericVariantWithFollowingVarchar() {
+      $this->assertEquals(
+        array('n' => 10, 'v' => 'Test'),
+        $this->db()->query('select cast(convert(numeric, 10) as sql_variant) as n, "Test" as v')->next()
+      );
+    }
+
+    /**
      * Test SQL_VARIANT type
      *
      */
@@ -123,7 +168,18 @@
       $cmp= new Date('2009-08-14 12:45:00');
       $this->assertEquals($cmp, $this->db()->query('select cast(convert(datetime, %s, 102) as sql_variant) as value', $cmp)->next('value'));
     }
- 
+
+    /**
+     * Test SQL_VARIANT type
+     *
+     * @see   https://github.com/xp-framework/xp-framework/issues/278
+     */
+    #[@test]
+    public function selectUniqueIdentifierariant() {
+      $cmp= '0E984725-C51C-4BF4-9960-E1C80E27ABA0';
+      $this->assertEquals($cmp, $this->db()->query('select cast(convert(uniqueidentifier, %s) as sql_variant) as value', $cmp)->next('value'));
+    }
+
     /**
      * Test uniqueidentifier type
      *

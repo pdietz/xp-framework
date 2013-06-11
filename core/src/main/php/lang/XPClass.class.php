@@ -65,11 +65,6 @@
     protected $_class= NULL;
     public $_reflect= NULL;
     
-    private static $DECLARING_CLASS_BUG= FALSE;
-    static function __static() {
-      self::$DECLARING_CLASS_BUG= version_compare(PHP_VERSION, '5.2.10', 'lt');
-    }
-      
     /**
      * Constructor
      *
@@ -180,16 +175,9 @@
      */
     public function getDeclaredMethods() {
       $list= array();
-      if (self::$DECLARING_CLASS_BUG) {
-        foreach ($this->_reflect->getMethods() as $m) {
-          if (0 == strncmp('__', $m->getName(), 2) || $m->getDeclaringClass()->getName() !== $this->_reflect->name) continue;
-          $list[]= new Method($this->_class, $m);
-        }
-      } else {
-        foreach ($this->_reflect->getMethods() as $m) {
-          if (0 == strncmp('__', $m->getName(), 2) || $m->class !== $this->_reflect->name) continue;
-          $list[]= new Method($this->_class, $m);
-        }
+      foreach ($this->_reflect->getMethods() as $m) {
+        if (0 == strncmp('__', $m->getName(), 2) || $m->class !== $this->_reflect->name) continue;
+        $list[]= new Method($this->_class, $m);
       }
       return $list;
     }
@@ -271,16 +259,9 @@
      */
     public function getDeclaredFields() {
       $list= array();
-      if (self::$DECLARING_CLASS_BUG) {
-        foreach ($this->_reflect->getProperties() as $p) {
-          if ('__id' === $p->name || $p->getDeclaringClass()->getName() !== $this->_reflect->name) continue;
-          $list[]= new Field($this->_class, $p);
-        }
-      } else {
-        foreach ($this->_reflect->getProperties() as $p) {
-          if ('__id' === $p->name || $p->class !== $this->_reflect->name) continue;
-          $list[]= new Field($this->_class, $p);
-        }
+      foreach ($this->_reflect->getProperties() as $p) {
+        if ('__id' === $p->name || $p->class !== $this->_reflect->name) continue;
+        $list[]= new Field($this->_class, $p);
       }
       return $list;
     }
@@ -379,6 +360,25 @@
       if (!($class instanceof self)) $class= XPClass::forName($class);
       if ($class->name == $this->name) return FALSE;   // Catch bordercase (ZE bug?)
       return $this->_reflect->isSubclassOf($class->_reflect);
+    }
+
+    /**
+     * Tests whether this class is assignable from a given type
+     *
+     * <code>
+     *   // util.Date instanceof lang.Object
+     *   XPClass::forName('lang.Object')->isAssignableFrom('util.Date');   // TRUE
+     * </code>
+     *
+     * @param   var type
+     * @return  bool
+     */
+    public function isAssignableFrom($type) {
+      $t= $type instanceof Type ? $type : Type::forName($type);
+      return $t instanceof self
+        ? $t->name === $this->name || $t->_reflect->isSubclassOf($this->_reflect)
+        : FALSE
+      ;
     }
 
     /**
@@ -576,8 +576,8 @@
      * @return  lang.IClassLoader
      */
     protected static function _classLoaderFor($name) {
-      if (isset(xp::$registry[$l= 'classloader.'.$name])) {
-        sscanf(xp::$registry[$l], '%[^:]://%[^$]', $cl, $argument);
+      if (isset(xp::$cl[$name])) {
+        sscanf(xp::$cl[$name], '%[^:]://%[^$]', $cl, $argument);
         return call_user_func(array(xp::reflect($cl), 'instanceFor'), $argument);
       }
       return NULL;    // Internal class, e.g.
@@ -630,13 +630,17 @@
               raise('lang.ClassFormatException', 'Parse error: Unterminated or malformed string in '.$context);
             }
             $offset= $p+ 1;
-          } else if ('array' === substr($peek, 0, 5)) {
+          } else if ('[' === ($a= $peek{0}) || 'array(' === ($a= substr($peek, 0, 6))) {
+            $la= strlen($a);
+            $ba= '[' === $a ? '[]' : '()';
             $b= 1;
-            $p= $offset+ 1+ 6;
+            $p= $offset+ $la+ 1;
             while ($b > 0) {
-              $p+= strcspn($input, '()"\'', $p);
-              if ($p >= $length) break; 
-              if ('(' === $input{$p}) $b++; else if (')' === $input{$p}) $b--; else if ('\'' === $input{$p} || '"' === $input{$p}) {
+              $p+= strcspn($input, $ba.'"\'', $p);
+              if ($p >= $length) {
+                raise('lang.ClassFormatException', 'Parse error: Unterminated array in '.$context);
+              }
+              if ($ba{0} === $input{$p}) $b++; else if ($ba{1} === $input{$p}) $b--;else if ('\'' === $input{$p} || '"' === $input{$p}) {
                 $q= $input{$p};
                 $p++;
                 while (($s= strcspn($input, $q, $p)) !== 0) {
@@ -647,8 +651,8 @@
               }
               $p++;
             }
-            if (!is_array($value= @eval('return '.substr($input, $offset+ 1, $p- $offset- 1).';'))) {
-              raise('lang.ClassFormatException', 'Parse error: Unterminated or malformed array in '.$context);
+            if ($p >= $length || !is_array($value= @eval('return array('.substr($input, $offset+ $la+ 1, $p- $offset- $la- 1- 1).');'))) {
+              raise('lang.ClassFormatException', 'Parse error: Malformed array in '.$context);
             }
             $offset= $p;
           } else if ('=' !== $peek{strlen($peek)- 1}) {
@@ -662,13 +666,17 @@
               $offset+= strspn($input, ' ', $offset);
               if ($offset >= $length) {
                 break;
-              } else if ('array' === substr($input, $offset, 5)) {
+              } else if ('[' === ($a= $input{$offset}) || 'array(' === ($a= substr($input, $offset, 6))) {
+                $la= strlen($a);
+                $ba= '[' === $a ? '[]' : '()';
                 $b= 1;
-                $p= $offset+ 6;
+                $p= $offset+ $la;
                 while ($b > 0) {
-                  $p+= strcspn($input, '()"\'', $p);
-                  if ($p > $length) break; 
-                  if ('(' === $input{$p}) $b++; else if (')' === $input{$p}) $b--; else if ('\'' === $input{$p} || '"' === $input{$p}) {
+                  $p+= strcspn($input, $ba.'"\'', $p);
+                  if ($p >= $length) {
+                    raise('lang.ClassFormatException', 'Parse error: Unterminated array in '.$context);
+                  }
+                  if ($ba{0} === $input{$p}) $b++; else if ($ba{1} === $input{$p}) $b--; else if ('\'' === $input{$p} || '"' === $input{$p}) {
                     $q= $input{$p};
                     $p++;
                     while (($s= strcspn($input, $q, $p)) !== 0) {
@@ -679,8 +687,8 @@
                   }
                   $p++;
                 }
-                if (!is_array($value[$key]= @eval('return '.substr($input, $offset, $p- $offset).';'))) {
-                  raise('lang.ClassFormatException', 'Parse error: Unterminated or malformed array in '.$context);
+                if (!is_array($value[$key]= @eval('return array('.substr($input, $offset+ $la, $p- $offset- $la- 1).');'))) {
+                  raise('lang.ClassFormatException', 'Parse error: Malformed array in '.$context);
                 }
                 $offset= $p;
               } else if ('\'' === $input{$offset} || '"' === $input{$offset}) {
@@ -853,7 +861,7 @@
             $m= $tokens[$i][1];
             $details[1][$m]= array(
               DETAIL_ARGUMENTS    => array(),
-              DETAIL_RETURNS      => 'void',
+              DETAIL_RETURNS      => NULL === $comment ? NULL : 'void',
               DETAIL_THROWS       => array(),
               DETAIL_COMMENT      => trim(preg_replace('/\n\s+\* ?/', "\n", "\n".substr(
                 $comment, 
@@ -905,15 +913,20 @@
      * @return  array or NULL to indicate no details are available
      */
     public static function detailsForClass($class) {
-      if (!$class) return NULL;        // Border case
-      if (isset(xp::$registry['details.'.$class])) return xp::$registry['details.'.$class];
+      if (!$class) {                                             // Border case
+        return NULL;
+      } else if (isset(xp::$meta[$class])) {                     // Cached
+        return xp::$meta[$class];
+      } else if (isset(xp::$registry[$l= 'details.'.$class])) {  // BC: Cached in registry
+        return xp::$registry[$l];
+      }
 
       // Retrieve class' sourcecode
       $cl= self::_classLoaderFor($class);
       if (!$cl || !($bytes= $cl->loadClassBytes($class))) return NULL;
 
       // Return details for specified class
-      return xp::$registry['details.'.$class]= self::parseDetails($bytes, $class);
+      return xp::$meta[$class]= self::parseDetails($bytes, $class);
     }
 
     /**
@@ -982,7 +995,7 @@
 
       // Create class if it doesn't exist yet
       if (!class_exists($name, FALSE) && !interface_exists($name, FALSE)) {
-        $meta= xp::$registry['details.'.$self->name];
+        $meta= xp::$meta[$self->name];
 
         // Parse placeholders into a lookup map
         $placeholders= array();
@@ -996,8 +1009,18 @@
           throw new IllegalStateException($self->name);
         }
 
+        // Namespaced class
+        if (FALSE !== ($ns= strrpos($name, '\\'))) {
+          $decl= substr($name, $ns + 1);
+          $namespace= substr($name, 0, $ns);
+          $src= 'namespace '.$namespace.';';
+        } else {
+          $decl= $name;
+          $namespace= NULL;
+          $src= '';
+        }
+
         // Replace source
-        $src= '';
         $annotation= NULL;
         $matches= array();
         $state= array(0);
@@ -1011,20 +1034,28 @@
               $src.= $tokens[$i][1].' ';
             } else if (T_CLASS === $tokens[$i][0] || T_INTERFACE === $tokens[$i][0]) {
               $meta['class'][DETAIL_GENERIC]= array($self->name, $arguments);
-              $src.= $tokens[$i][1].' '.$name;
+              $src.= $tokens[$i][1].' '.$decl;
               array_unshift($state, $tokens[$i][0]);
             }
             continue;
           } else if (T_CLASS === $state[0]) {
             if (T_EXTENDS === $tokens[$i][0]) {
+              $i+= 2;
+              $parent= '';
+              while ((T_STRING === $tokens[$i][0] || T_NS_SEPARATOR === $tokens[$i][0]) && $i < $s) {
+                $parent.= $tokens[$i][1];
+                $i++;
+              }
+              $i--;
+              '\\' === $parent{0} || $parent= $namespace.'\\'.$parent;
               if (isset($annotations['generic']['parent'])) {
                 $xargs= array();
                 foreach (explode(',', $annotations['generic']['parent']) as $j => $placeholder) {
                   $xargs[]= Type::forName(strtr(ltrim($placeholder), $placeholders));
                 }
-                $src.= ' extends '.strtr(self::createGenericType($self->getParentClass(), $xargs), '\\', '¦');
+                $src.= ' extends \\'.self::createGenericType($self->getParentClass(), $xargs);
               } else {
-                $src.= ' extends '.$tokens[$i+ 2][1];
+                $src.= ' extends '.$parent;
               }
             } else if (T_IMPLEMENTS === $tokens[$i][0]) {
               $src.= ' implements';
@@ -1052,10 +1083,11 @@
           } else if (1 === $state[0]) {             // Class body
             if (T_FUNCTION === $tokens[$i][0]) {
               $braces= 0;
-              $parameters= array();
+              $parameters= $default= array();
               array_unshift($state, 3);
               array_unshift($state, 2);
               $m= $tokens[$i+ 2][1];
+              $p= 0;
               $annotations= array($meta[1][$m][DETAIL_ANNOTATIONS], $meta[1][$m][DETAIL_TARGET_ANNO]);
             } else if ('}' === $tokens[$i][0]) {
               $src.= '}';
@@ -1068,13 +1100,35 @@
               $braces++;
             } else if (')' === $tokens[$i][0]) {
               $braces--;
-              if (0 === $braces) array_shift($state);
-            } else if (T_VARIABLE === $tokens[$i][0]) {
+              if (0 === $braces) {
+                array_shift($state);
+                $src.= ')';
+                continue;
+              }
+            }
+            if (T_VARIABLE === $tokens[$i][0]) {
               $parameters[]= $tokens[$i][1];
+            } else if ('=' === $tokens[$i][0]) {
+              $p= sizeof($parameters)- 1;
+              $default[$p]= '';
+            } else if (T_WHITESPACE !== $tokens[$i][0] && isset($default[$p])) {
+              $default[$p].= is_array($tokens[$i]) ? $tokens[$i][1] : $tokens[$i];
             }
           } else if (3 === $state[0]) {             // Method body
             if (';' === $tokens[$i][0]) {
               // Abstract method
+              if (isset($annotations[0]['generic']['return'])) {
+                $meta[1][$m][DETAIL_RETURNS]= strtr($annotations[0]['generic']['return'], $placeholders);
+              }
+              if (isset($annotations[0]['generic']['params'])) {
+                foreach (explode(',', $annotations[0]['generic']['params']) as $j => $placeholder) {
+                  if ('' !== ($replaced= strtr(ltrim($placeholder), $placeholders))) {
+                    $meta[1][$m][DETAIL_ARGUMENTS][$j]= $replaced;
+                  }
+                }
+              }
+              $annotations= array();
+              unset($meta[1][$m][DETAIL_ANNOTATIONS]['generic']);
               array_shift($state);
             } else if ('{' === $tokens[$i][0]) {
               $braces= 1;
@@ -1095,7 +1149,6 @@
                     $generic[$j]= $replaced;
                   }
                 }
-
                 foreach ($generic as $j => $type) {
                   if (NULL === $type) {
                     continue;
@@ -1109,7 +1162,8 @@
                     );
                   } else {
                     $src.= (
-                      ' if (!is(\''.$generic[$j].'\', '.$parameters[$j].')) throw new IllegalArgumentException('.
+                      ' if ('.(isset($default[$j]) ? '('.$default[$j].' !== '.$parameters[$j].') && ' : '').
+                      '!is(\''.$generic[$j].'\', '.$parameters[$j].')) throw new IllegalArgumentException('.
                       '"Argument '.($j + 1).' passed to ".__METHOD__."'.
                       ' must be of '.$type.', ".xp::typeOf('.$parameters[$j].')." given"'.
                       ');'
@@ -1118,7 +1172,7 @@
                 }
               }
 
-              $annotations= array();              
+              $annotations= array();
               unset($meta[1][$m][DETAIL_ANNOTATIONS]['generic']);
               continue;
             }
@@ -1131,14 +1185,21 @@
             }
           } else if (5 === $state[0]) {             // Implements (class), Extends (interface)
             if (T_STRING === $tokens[$i][0]) {
+              $rel= '';
+              while ((T_STRING === $tokens[$i][0] || T_NS_SEPARATOR === $tokens[$i][0]) && $i < $s) {
+                $rel.= $tokens[$i][1];
+                $i++;
+              }
+              $i--;
+              '\\' === $rel{0} || $rel= $namespace.'\\'.$rel;
               if (isset($annotation[$counter])) {
                 $iargs= array();
                 foreach (explode(',', $annotation[$counter]) as $j => $placeholder) {
                   $iargs[]= Type::forName(strtr(ltrim($placeholder), $placeholders));
                 }
-                $src.= strtr(self::createGenericType(new XPClass(new ReflectionClass($tokens[$i][1])), $iargs), '\\', '¦');
+                $src.= '\\'.self::createGenericType(new XPClass(new ReflectionClass($rel)), $iargs);
               } else {
-                $src.= $tokens[$i][1];
+                $src.= $rel;
               }
               $counter++;
               continue;
@@ -1156,8 +1217,13 @@
         eval($src);
         method_exists($name, '__static') && call_user_func(array($name, '__static'));
         unset($meta['class'][DETAIL_ANNOTATIONS]['generic']);
-        xp::$registry['details.'.$qname]= $meta;
-        xp::$registry['class.'.$name]= $qname;
+        xp::$meta[$qname]= $meta;
+        xp::$cn[$name]= $qname;
+
+        // Create alias if no PHP namespace is present and a qualified name exists
+        if (!$ns && strstr($qname, '.')) {
+          class_alias($name, strtr($self->getName(), '.', '\\').'··'.substr($cn, 1));
+        }
       }
       
       return $name;
@@ -1281,7 +1347,7 @@
     public static function getClasses() {
       $ret= array();
       foreach (get_declared_classes() as $name) {
-        if (isset(xp::$registry['class.'.$name])) $ret[]= new self($name);
+        if (isset(xp::$cn[$name])) $ret[]= new self($name);
       }
       return $ret;
     }

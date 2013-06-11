@@ -13,6 +13,7 @@
     'util.FilesystemPropertySource',
     'util.ResourcePropertySource',
     'util.log.Logger',
+    'util.log.context.EnvironmentAware',
     'rdbms.ConnectionManager',
     'scriptlet.HttpScriptlet',
     'peer.http.HttpConstants'
@@ -71,6 +72,7 @@
      * Entry point method. Receives the following arguments from web.php:
      * <ol>
      *   <li>The web root</li>
+     *   <li>The configuration directory</li>
      *   <li>The server profile</li>
      *   <li>The script URL</li>
      * </ol>
@@ -78,9 +80,9 @@
      * @param   string[] args
      */
     public static function main(array $args) {
-      $r= new self($args[0], $args[1]);
-      $r->configure(new Properties($args[0].'/etc/web.ini'));
-      $r->run($args[2]);
+      $r= new self($args[0], $args[2]);
+      $r->configure(new Properties($args[1].DIRECTORY_SEPARATOR.'web.ini'));
+      $r->run($args[3]);
     }
     
     /**
@@ -168,7 +170,17 @@
 
       $cm= ConnectionManager::getInstance();
       $pm->hasProperties('database') && $cm->configure($pm->getProperties('database'));
-      
+
+      // Setup logger context for all registered log categories
+      foreach (Logger::getInstance()->getCategories() as $category) {
+        if (NULL === ($context= $category->getContext()) || !($context instanceof EnvironmentAware)) continue;
+        $context->setHostname($_SERVER['SERVER_NAME']);
+        $context->setRunner($this->getClassName());
+        $context->setInstance($application->getScriptlet());
+        $context->setResource($url);
+        $context->setParams($_SERVER['QUERY_STRING']);
+      }
+
       // Set environment variables
       foreach ($application->getEnvironment() as $key => $value) {
         $_SERVER[$key]= $this->expand($value);
@@ -238,7 +250,7 @@
       
       if (($flags & WebDebug::ERRORS)) {
         flush();
-        echo '<xmp>', $e ? $e->toString() : '', xp::stringOf(xp::registry('errors')), '</xmp>';
+        echo '<xmp>', $e ? $e->toString() : '', xp::stringOf(xp::$errors), '</xmp>';
       }
     }
 

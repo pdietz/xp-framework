@@ -57,20 +57,12 @@
     const T_PACKAGE             = 0x1001;
     const T_DEFINE              = 0x1002;
 
-    static function __static() {
-
-      // For parsing backwards compatibility in PHP 5.2
-      if (!defined('T_NAMESPACE')) {
-        define('T_NAMESPACE', 377);
-      }
-    }
-    
     /**
      * Constructor
      *
      */
     public function __construct() {
-      $this->setSourcePath(xp::$registry['classpath']);
+      $this->setSourcePath(xp::$classpath);
     }
 
     /**
@@ -101,7 +93,16 @@
       }
       $this->sourcepath[$l->hashCode()]= $l;
     }
-    
+
+    /**
+     * Adds a source loader
+     *
+     * @param   lang.IClassLoader
+     */
+    public function addSourceLoader(IClassLoader $l) {
+      $this->sourcepath[$l->hashCode()]= $l;
+    }
+
     /**
      * Start a doclet
      *
@@ -221,10 +222,13 @@
      * @return  string qualified name
      */
     public function qualifyName($doc, $name) {
-      if (!($lookup= xp::registry('class.'.$name))) {
+      if (isset(xp::$cn[$name])) {
         foreach ($doc->usedClasses->classes as $class) {
-          if (xp::reflect($class) == $name) return $class;
+          if (xp::reflect($class) === $name) return $class;
         }
+        $lookup= xp::$cn[$name];
+      } else {
+        $lookup= NULL;
       }
 
       // Nothing found!

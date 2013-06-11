@@ -8,7 +8,9 @@
     'unittest.TestCase',
     'scriptlet.HttpScriptletRequest',
     'scriptlet.HttpScriptletResponse',
-    'webservices.rest.srv.RestContext'
+    'webservices.rest.srv.RestContext',
+    'util.log.Logger',
+    'util.log.LogCategory'
   );
   
   /**
@@ -35,6 +37,16 @@
      */
     public function setUp() {
       $this->fixture= new RestContext();
+    }
+
+    /**
+     * Returns a class object for a given fixture class
+     *
+     * @param  string class
+     * @return lang.XPClass
+     */
+    protected function fixtureClass($class) {
+      return self::$package->loadClass($class);
     }
 
     /**
@@ -68,14 +80,14 @@
     public function marshal_this_with_typemarshaller() {
       $this->fixture->addMarshaller('unittest.TestCase', newinstance('webservices.rest.TypeMarshaller', array(), '{
         public function marshal($t) {
-          return $t->getClassName()."::".$t->getName();
+          return $t->getName();
         }
-        public function unmarshal($name) {
+        public function unmarshal(Type $target, $name) {
           // Not needed
         }
       }'));
       $this->assertEquals(
-        new Payload($this->getClassName().'::'.$this->getName()),
+        new Payload($this->getName()),
         $this->fixture->marshal(new Payload($this))
       );
     }
@@ -90,17 +102,15 @@
         public function marshal($t) {
           // Not needed
         }
-        public function unmarshal($name) {
-          sscanf($name, "%[^:]::%s", $class, $test);
-          return XPClass::forName($class)->newInstance($test);
+        public function unmarshal(Type $target, $name) {
+          return $target->newInstance($name);
         }
       }'));
       $this->assertEquals(
         $this,
-        $this->fixture->unmarshal($this->getClass(), $this->getClassName().'::'.$this->getName())
+        $this->fixture->unmarshal($this->getClass(), $this->getName())
       );
     }
-
 
     /**
      * Fixture for handle() tests
@@ -311,7 +321,7 @@
     public function handle_exception_with_mapper() {
       $t= new Throwable('Test');
       $this->fixture->addExceptionMapping('lang.Throwable', newinstance('webservices.rest.srv.ExceptionMapper', array(), '{
-        public function asResponse($t) {
+        public function asResponse($t, RestContext $ctx) {
           return Response::error(500)->withPayload(array("message" => $t->getMessage()));
         }
       }'));
@@ -331,6 +341,45 @@
         protected $context;
         #[@inject(type = "webservices.rest.srv.RestContext")]
         public function __construct($context) { $this->context= $context; }
+        public function equals($cmp) { return $cmp instanceof self && $this->context->equals($cmp->context); }
+      }');
+      $this->assertEquals(
+        $class->newInstance($this->fixture),
+        $this->fixture->handlerInstanceFor($class)
+      );
+    }
+
+    /**
+     * Test handlerInstanceFor() injection
+     *
+     */
+    #[@test]
+    public function typename_injection() {
+      $class= ClassLoader::defineClass('AbstractRestRouterTest_TypeNameInjection', 'lang.Object', array(), '{
+        protected $context;
+
+        /** @param webservices.rest.srv.RestContext context */
+        #[@inject]
+        public function __construct($context) { $this->context= $context; }
+        public function equals($cmp) { return $cmp instanceof self && $this->context->equals($cmp->context); }
+      }');
+      $this->assertEquals(
+        $class->newInstance($this->fixture),
+        $this->fixture->handlerInstanceFor($class)
+      );
+    }
+
+    /**
+     * Test handlerInstanceFor() injection
+     *
+     */
+    #[@test]
+    public function typerestriction_injection() {
+      $class= ClassLoader::defineClass('AbstractRestRouterTest_TypeRestrictionInjection', 'lang.Object', array(), '{
+        protected $context;
+
+        #[@inject]
+        public function __construct(RestContext $context) { $this->context= $context; }
         public function equals($cmp) { return $cmp instanceof self && $this->context->equals($cmp->context); }
       }');
       $this->assertEquals(
@@ -361,6 +410,43 @@
     /**
      * Test handlerInstanceFor() injection
      * 
+     */
+    #[@test]
+    public function unnamed_logcategory_injection() {
+      $class= ClassLoader::defineClass('AbstractRestRouterTest_UnnamedLogcategoryInjection', 'lang.Object', array(), '{
+        public $cat;
+        #[@inject(type = "util.log.LogCategory")]
+        public function setTrace($cat) { $this->cat= $cat; }
+      }');
+      $cat= new LogCategory('test');
+      $this->fixture->setTrace($cat);
+      $this->assertEquals(
+        $cat,
+        $this->fixture->handlerInstanceFor($class)->cat
+      );
+    }
+
+    /**
+     * Test handlerInstanceFor() injection
+     *
+     */
+    #[@test]
+    public function named_logcategory_injection() {
+      $class= ClassLoader::defineClass('AbstractRestRouterTest_NamedLogcategoryInjection', 'lang.Object', array(), '{
+        public $cat;
+        #[@inject(type = "util.log.LogCategory", name = "test")]
+        public function setTrace($cat) { $this->cat= $cat; }
+      }');
+      $cat= Logger::getInstance()->getCategory('test');
+      $this->assertEquals(
+        $cat,
+        $this->fixture->handlerInstanceFor($class)->cat
+      );
+    }
+
+    /**
+     * Test handlerInstanceFor() injection
+     *
      */
     #[@test, @expect(class = 'lang.reflect.TargetInvocationException', withMessage= '/InjectionError::setTrace/')]
     public function injection_error() {
@@ -399,15 +485,12 @@
         }
       }');
       foreach ($params as $name => $value) {
-        if ('Cookie' === $name) {
-        } else {
-          $r->setParam($name, $value);
-        }
+        $r->setParam($name, $value);
       }
       if (isset($headers['Cookie'])) {
         foreach (explode(';', $headers['Cookie']) as $cookie) {
           sscanf(trim($cookie), '%[^=]=%s', $name, $value);
-          $_COOKIE[$name]= $value;
+          $r->addCookie(new Cookie($name, $value));
         }
         unset($headers['Cookie']);
       }
@@ -422,6 +505,7 @@
     #[@test]
     public function greet_implicit_segment_and_param() {
       $route= array(
+        'handler'  => $this->fixtureClass('ImplicitGreetingHandler'),
         'target'   => $this->fixtureMethod('ImplicitGreetingHandler', 'greet'),
         'params'   => array(),
         'segments' => array(0 => '/implicit/greet/test', 'name' => 'test', 1 => 'test'),
@@ -441,6 +525,7 @@
     #[@test]
     public function greet_implicit_segment_and_missing_param() {
       $route= array(
+        'handler'  => $this->fixtureClass('ImplicitGreetingHandler'),
         'target'   => $this->fixtureMethod('ImplicitGreetingHandler', 'greet'),
         'params'   => array(),
         'segments' => array(0 => '/implicit/greet/test', 'name' => 'test', 1 => 'test'),
@@ -460,6 +545,7 @@
     #[@test]
     public function greet_implicit_payload() {
       $route= array(
+        'handler'  => $this->fixtureClass('ImplicitGreetingHandler'),
         'target'   => $this->fixtureMethod('ImplicitGreetingHandler', 'greet_posted'),
         'params'   => array(),
         'segments' => array(0 => '/greet'),
@@ -479,6 +565,7 @@
     #[@test]
     public function greet_intl() {
       $route= array(
+        'handler'  => $this->fixtureClass('GreetingHandler'),
         'target'   => $this->fixtureMethod('GreetingHandler', 'greet_intl'),
         'params'   => array('language' => new RestParamSource('Accept-Language', ParamReader::$HEADER)),
         'segments' => array(0 => '/intl/greet/test', 'name' => 'test', 1 => 'test'),
@@ -498,6 +585,7 @@
     #[@test]
     public function greet_user() {
       $route= array(
+        'handler'  => $this->fixtureClass('GreetingHandler'),
         'target'   => $this->fixtureMethod('GreetingHandler', 'greet_user'),
         'params'   => array('name' => new RestParamSource('user', ParamReader::$COOKIE)),
         'segments' => array(0 => '/user/greet'),
@@ -536,6 +624,7 @@
     #[@test]
     public function process_greet_successfully() {
       $route= array(
+        'handler'  => $this->fixtureClass('GreetingHandler'),
         'target'   => $this->fixtureMethod('GreetingHandler', 'greet'),
         'params'   => array('name' => new RestParamSource('name', ParamReader::$PATH)),
         'segments' => array(0 => '/greet/Test', 'name' => 'Test', 1 => 'Test'),
@@ -555,6 +644,7 @@
     #[@test]
     public function process_greet_with_missing_parameter() {
       $route= array(
+        'handler'  => $this->fixtureClass('GreetingHandler'),
         'target'   => $this->fixtureMethod('GreetingHandler', 'greet'),
         'params'   => array('name' => new RestParamSource('name', ParamReader::$PATH)),
         'segments' => array(0 => '/greet/'),
@@ -574,6 +664,7 @@
     #[@test]
     public function process_greet_and_go() {
       $route= array(
+        'handler'  => $this->fixtureClass('GreetingHandler'),
         'target'   => $this->fixtureMethod('GreetingHandler', 'greet_and_go'),
         'params'   => array('name' => new RestParamSource('name', ParamReader::$PATH)), 
         'segments' => array(0 => '/greet/and/go/test', 'name' => 'test', 1 => 'test'),
@@ -584,6 +675,151 @@
         204, array(), NULL,
         $route, $this->newRequest()
       );
+    }
+
+    /**
+     * Test marshalling is also applied to exceptions in mapException()
+     *
+     */
+    #[@test]
+    public function marshal_exceptions() {
+      $this->fixture->addMarshaller('unittest.AssertionFailedError', newinstance('webservices.rest.TypeMarshaller', array(), '{
+        public function marshal($t) {
+          return "expected ".xp::stringOf($t->expect)." but was ".xp::stringOf($t->actual);
+        }
+        public function unmarshal(Type $target, $name) {
+          // Not needed
+        }
+      }'));
+      $this->assertEquals(
+        Response::error(500)->withPayload(new Payload('expected 1 but was 2', array('name' => 'exception'))),
+        $this->fixture->mapException(new AssertionFailedError('Test', 2, 1))
+      );
+    }
+
+    /**
+     * Test handle()
+     *
+     */
+    #[@test]
+    public function process_streaming_output() {
+      $route= array(
+        'handler'  => $this->fixtureClass('GreetingHandler'),
+        'target'   => $this->fixtureMethod('GreetingHandler', 'download_greeting'),
+        'params'   => array(),
+        'segments' => array(0 => '/download'),
+        'input'    => NULL,
+        'output'   => NULL
+      );
+
+      $this->assertProcess(
+        200, array('Content-Type: text/plain; charset=utf-8', 'Content-Length: 11'), 'Hello World',
+        $route, $this->newRequest()
+      );
+    }
+
+    /**
+     * Test handle()
+     * 
+     */
+    #[@test]
+    public function process_extended() {
+      $extended= ClassLoader::defineClass(
+        'net.xp_framework.unittest.webservices.rest.srv.fixture.GreetingHandlerExtended',
+        $this->fixtureClass('GreetingHandler')->getName(),
+        array(),
+        '{}'
+      );
+
+      $route= array(
+        'handler'  => $extended,
+        'target'   => $extended->getMethod('greet_class'),
+        'params'   => array(),
+        'segments' => array(0 => '/greet/class'),
+        'input'    => NULL,
+        'output'   => 'text/json'
+      );
+
+      $this->assertProcess(
+        200, array('Content-Type: text/json'), '"Hello '.$extended->getName().'"',
+        $route, $this->newRequest()
+      );
+    }
+
+    /**
+     * Test addExceptionMapping()
+     */
+    #[@test]
+    public function add_exception_mapping_returns_added_mapping() {
+      $mapping= newinstance('webservices.rest.srv.ExceptionMapper', array(), '{
+        public function asResponse($t, RestContext $ctx) {
+          return Response::error(500)->withPayload(array("message" => $t->getMessage()));
+        }
+      }');
+      $this->assertEquals($mapping, $this->fixture->addExceptionMapping('lang.Throwable', $mapping));
+    }
+
+    /**
+     * Test getExceptionMapping()
+     */
+    #[@test]
+    public function get_exception_mapping() {
+      $mapping= newinstance('webservices.rest.srv.ExceptionMapper', array(), '{
+        public function asResponse($t, RestContext $ctx) {
+          return Response::error(500)->withPayload(array("message" => $t->getMessage()));
+        }
+      }');
+      $this->fixture->addExceptionMapping('lang.Throwable', $mapping);
+      $this->assertEquals($mapping, $this->fixture->getExceptionMapping('lang.Throwable'));
+    }
+
+    /**
+     * Test getExceptionMapping()
+     */
+    #[@test]
+    public function get_non_existant_exception_mapping() {
+      $this->assertNull($this->fixture->getExceptionMapping('unittest.AssertionFailedError'));
+    }
+
+    /**
+     * Test addMarshaller()
+     */
+    #[@test]
+    public function add_marshaller_returns_added_marshaller() {
+      $marshaller= newinstance('webservices.rest.TypeMarshaller', array(), '{
+        public function marshal($t) {
+          return $t->getName();
+        }
+        public function unmarshal(Type $target, $name) {
+          // Not needed
+        }
+      }');
+      $this->assertEquals($marshaller, $this->fixture->addMarshaller('unittest.TestCase', $marshaller));
+    }
+
+    /**
+     * Test getMarshaller()
+     */
+    #[@test]
+    public function get_marshaller() {
+      $marshaller= newinstance('webservices.rest.TypeMarshaller', array(), '{
+        public function marshal($t) {
+          return $t->getName();
+        }
+        public function unmarshal(Type $target, $name) {
+          // Not needed
+        }
+      }');
+      $this->fixture->addMarshaller('unittest.TestCase', $marshaller);
+      $this->assertEquals($marshaller, $this->fixture->getMarshaller('unittest.TestCase'));
+    }
+
+    /**
+     * Test getMarshaller()
+     */
+    #[@test]
+    public function get_non_existant_marshaller() {
+      $this->assertNull($this->fixture->getMarshaller('unittest.TestCase'));
     }
   }
 ?>

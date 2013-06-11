@@ -104,7 +104,7 @@
       $path= rtrim($path, '/');
       $matching= $order= array();
       foreach ($this->routes[$verb] as $route) {
-        if (!preg_match($route->getPattern(), $path, $segments)) continue;
+        if (!($segments= $route->appliesTo($path))) continue;
 
         // Check input type if specified by client
         if (NULL !== $type) {
@@ -121,6 +121,7 @@
 
         // Found possible candidate
         $matching[]= array(
+          'handler'  => $route->getHandler(),
           'target'   => $route->getTarget(), 
           'params'   => $route->getParams(),
           'segments' => $segments,

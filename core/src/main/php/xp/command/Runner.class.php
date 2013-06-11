@@ -13,6 +13,7 @@
     'io.streams.ConsoleInputStream',
     'io.streams.ConsoleOutputStream',
     'util.log.Logger',
+    'util.log.context.EnvironmentAware',
     'util.PropertyManager',
     'util.FilesystemPropertySource',
     'util.ResourcePropertySource',
@@ -208,9 +209,7 @@
           $offset+= 2; $i++;
           break;
         case '-cp':
-          foreach (explode(PATH_SEPARATOR, $params->list[$i+ 1]) as $element) {
-            ClassLoader::registerPath($element, NULL);
-          }
+          ClassLoader::registerPath($params->list[$i+ 1], NULL);
           $offset+= 2; $i++;
           break;
         case '-v':
@@ -245,7 +244,7 @@
         }
         $uri= $file->getURI();
         $path= dirname($uri);
-        $paths= array_flip(array_map('realpath', xp::$registry['classpath']));
+        $paths= array_flip(array_map('realpath', xp::$classpath));
         $class= NULL;
         while (FALSE !== ($pos= strrpos($path, DIRECTORY_SEPARATOR))) { 
           if (isset($paths[$path])) {
@@ -287,6 +286,16 @@
 
       $cm= ConnectionManager::getInstance();
       $pm->hasProperties('database') && $cm->configure($pm->getProperties('database'));
+
+      // Setup logger context for all registered log categories
+      foreach (Logger::getInstance()->getCategories() as $category) {
+        if (NULL === ($context= $category->getContext()) || !($context instanceof EnvironmentAware)) continue;
+        $context->setHostname(System::getProperty('host.name'));
+        $context->setRunner($this->getClassName());
+        $context->setInstance($class->getName());
+        $context->setResource(NULL);
+        $context->setParams($params->string);
+      }
 
       $instance= $class->newInstance();
       $instance->in= self::$in;

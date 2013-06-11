@@ -8,8 +8,7 @@
     'lang.IClassLoader',
     'lang.FileSystemClassLoader',
     'lang.DynamicClassLoader',
-    'lang.archive.ArchiveClassLoader',
-    'lang.Module'
+    'lang.archive.ArchiveClassLoader'
   );
   
   /** 
@@ -53,17 +52,10 @@
       $delegates  = array();
 
     static function __static() {
-      xp::$registry['loader']= new self();
+      xp::$loader= new self();
       
-      // Declare core module
-      $dyn= DynamicClassLoader::instanceFor('modules');
-      $dyn->setClassBytes('__CoreModule', 'class __CoreModule extends Object { }');
-      xp::$registry['modules']= array(
-        'core' => new Module(xp::$registry['loader'], $dyn->loadClass('__CoreModule'), NULL, 'core', xp::version())
-      );
-
       // Scan include-path, setting up classloaders for each element
-      foreach (xp::$registry['classpath'] as $element) {
+      foreach (xp::$classpath as $element) {
         if ('!' === $element{0}) {
           $before  = TRUE;
           $element = substr($element, 1);
@@ -77,6 +69,9 @@
         } else if (is_file($resolved)) {
           $cl= ArchiveClassLoader::instanceFor($resolved, FALSE);
         } else {
+          if ('/' !== $element{0} && ':' !== $element{1}) {   // If not fully qualified
+            $element.= ' (in '.getcwd().')';
+          }
           xp::error('[bootstrap] Classpath element ['.$element.'] not found');
         }
         isset(self::$delegates[$cl->instanceId()]) || self::registerLoader($cl, $before);
@@ -89,7 +84,7 @@
      * @return  lang.ClassLoader
      */
     public static function getDefault() {
-      return xp::$registry['loader'];
+      return xp::$loader;
     }
 
     /**
@@ -108,91 +103,14 @@
       } else {
         $before= (bool)$before;
       }
-      $resolved= realpath($element);
-      if (is_dir($resolved)) {
-        return self::registerLoader(FileSystemClassLoader::instanceFor($resolved), $before);
-      } else if (is_file($resolved)) {
-        return self::registerLoader(ArchiveClassLoader::instanceFor($resolved), $before);
+      if (is_dir($element)) {
+        return self::registerLoader(FileSystemClassLoader::instanceFor($element), $before);
+      } else if (is_file($element)) {
+        return self::registerLoader(ArchiveClassLoader::instanceFor($element), $before);
       }
       raise('lang.ElementNotFoundException', 'Element "'.$element.'" not found');
     }
     
-    /**
-     * Declare a module
-     *
-     * @param   lang.IClassLoader l
-     * @throws  lang.ClassFormatException
-     * @return  lang.reflect.Module
-     */
-    public static function declareModule($l) {
-      if (!preg_match('/module ([a-z][a-z0-9_\/\.-]*)(\(([^\)]+)\))?\s(provides ([^{]+))?\s*{/', $moduleInfo= trim($l->getResource('module.xp')), $m)) {
-        raise('lang.ClassFormatException', 'Cannot parse module.xp in '.$l->toString());
-      }
-
-      // Declare module
-      $module= '__'.ucfirst(strtr($m[1], '.-/', '·»¦')).'Module';
-
-      // Remove PHP tags if existant
-      if ('<?php' === substr($moduleInfo, 0, 5)) $moduleInfo= substr($moduleInfo, 5);
-      if ('?>' === substr($moduleInfo, -2, 2)) $moduleInfo= substr($moduleInfo, 0, -2);
-
-      // Load class and register
-      array_unshift(self::$delegates, $l);
-      $dyn= DynamicClassLoader::instanceFor('modules');
-      $dyn->setClassBytes($module, strtr($moduleInfo, array($m[0] => 'class '.$module.' extends Object {'.
-        'public static $name= "'.$m[1].'";'.
-        'public static $version= '.(isset($m[2]) ? '"'.$m[3].'"' : 'NULL').';'
-      )));
-      try {
-        $class= $dyn->loadClass($module);
-        unset(self::$delegates[0]);
-      } catch (ClassLoadingException $e) {
-        unset(self::$delegates[0]);
-        throw $e;
-      }
-      if ($class->hasMethod('initialize')) {
-        $class->getMethod('initialize')->invoke(NULL, array($l));
-      }
-
-      // Parse provided packages
-      if (isset($m[5])) {
-        $provides= array();
-        foreach (explode(',', $m[5]) as $package) {
-          $provides[]= trim($package);
-        }
-      } else {
-        $provides= NULL;
-      }
-
-      return new Module($l, $class, $provides, $m[1], isset($m[2]) ? $m[3] : NULL);
-    }
-
-    /**
-     * Register module
-     * 
-     * @param  lang.reflect.Module m
-     * @throws lang.IllegalStateException 
-     * @return lang.reflect.Module m
-     */
-    public static function registerModule($m) {
-      $name= $m->getName();
-      if (isset(xp::$registry['modules'][$name])) {
-        raise('lang.IllegalStateException', 'Module "'.$name.'" already registered');
-      }
-
-      xp::$registry['modules'][$name]= $m;
-      return $m;
-    }
-
-    /**
-     * Unregister a module
-     * 
-     * @param  lang.reflect.Module m
-     */
-    public static function removeModule($m) {
-      unset(xp::$registry['modules'][$m->getName()]);
-    }
-
     /**
      * Register a class loader as a delegate
      *
@@ -201,10 +119,6 @@
      * @return  lang.IClassLoader the registered loader
      */
     public static function registerLoader(IClassLoader $l, $before= FALSE) {
-      if ($l->providesResource('module.xp')) {
-        $l= self::registerModule(self::declareModule($l));
-      }
-
       if ($before) {
         self::$delegates= array_merge(array($l->instanceId() => $l), self::$delegates);
       } else {
@@ -220,10 +134,6 @@
      * @return  bool TRUE if the delegate was unregistered
      */
     public static function removeLoader(IClassLoader $l) {
-
-      // FIXME: we should not be using self::removeModule() specialization
-      if ($l instanceof Module) self::removeModule($l);
-
       $id= $l->instanceId();
       if (!isset(self::$delegates[$id])) return FALSE;
       unset(self::$delegates[$id]);
@@ -240,34 +150,41 @@
     }
 
     /**
+     * Helper method to turn a given value into a class object
+     *
+     * @param  var class
+     * @return lang.XPClass
+     */
+    protected static function classOf($class) {
+      if ($class instanceof XPClass) {
+        return $class;
+      } else {
+        return XPClass::forName(strstr($class, '.') ? $class : xp::nameOf($class));
+      }
+    }
+
+    /**
      * Define a class with a given name
      *
      * @param   string class fully qualified class name
-     * @param   string parent either sourcecode of the class or FQCN of parent
-     * @param   string[] interfaces FQCNs of implemented interfaces
+     * @param   var parent The parent class either by qualified name or XPClass instance
+     * @param   var[] interfaces The implemented interfaces either by qualified names or XPClass instances
      * @param   string bytes default "{}" inner sourcecode of class (containing {}) 
      * @return  lang.XPClass
      * @throws  lang.FormatException in case the class cannot be defined
-     * @throws  lang.ClassNotFoundException if given parent class does not exist
      */
     public static function defineClass($class, $parent, $interfaces, $bytes= '{}') {
       $name= xp::reflect($class);
-      if (!isset(xp::$registry['classloader.'.$class])) {
-        $super= xp::reflect($parent);
+      if (!isset(xp::$cl[$class])) {
 
-        // Test for existance        
-        if (!class_exists($super)) {
-          raise('lang.ClassLinkageException', $parent, self::getLoaders()); 
-        }
-        
-        if (!empty($interfaces)) {
-          $if= array_map(array('xp', 'reflect'), $interfaces);
-          foreach ($if as $i => $implemented) {
-            if (interface_exists($implemented)) continue;
-            raise('lang.ClassLinkageException', $interfaces[$i], self::getLoaders()); 
-          }
+        // Load parent class and implemented interfaces
+        $super= self::classOf($parent)->literal();
+        $if= array();
+        foreach ((array)$interfaces as $interface) {
+          $if[]= self::classOf($interface)->literal();
         }
 
+        // Define class
         with ($dyn= self::registerLoader(DynamicClassLoader::instanceFor(__METHOD__))); {
           $dyn->setClassBytes($class, sprintf(
             'class %s extends %s%s %s',
@@ -288,28 +205,27 @@
      * Define an interface with a given name
      *
      * @param   string class fully qualified class name
-     * @param   string[] parents FQCNs of parent interfaces
+     * @param   var[] parents The parent interfaces either by qualified names or XPClass instances
      * @param   string bytes default "{}" inner sourcecode of class (containing {}) 
      * @return  lang.XPClass
      * @throws  lang.FormatException in case the class cannot be defined
-     * @throws  lang.ClassNotFoundException if given parent class does not exist
      */
     public static function defineInterface($class, $parents, $bytes= '{}') {
-      $name= xp::reflect($class); $if= array();
-      if (!isset(xp::$registry['classloader.'.$class])) {
-        if (!empty($parents)) {
-          $if= array_map(array('xp', 'reflect'), (array)$parents);
-          foreach ($if as $i => $super) {
-            if (interface_exists($super, FALSE)) continue;
-            raise('lang.ClassLinkageException', $parents[$i], self::getLoaders()); 
-          }
+      $name= xp::reflect($class);
+      if (!isset(xp::$cl[$class])) {
+
+        // Load parent class and implemented interfaces
+        $if= array();
+        foreach ((array)$parents as $interface) {
+          $if[]= self::classOf($interface)->literal();
         }
 
+        // Define class
         with ($dyn= self::registerLoader(DynamicClassLoader::instanceFor(__METHOD__))); {
           $dyn->setClassBytes($class, sprintf(
             'interface %s%s %s',
             $name,
-            sizeof($if) ? ' extends '.implode(', ', $if) : '',
+            $parents ? ' extends '.implode(', ', $if) : '',
             $bytes
           ));
           
@@ -329,7 +245,7 @@
      * @throws  lang.ClassFormatException in case the class format is invalud
      */
     public function loadClass0($class) {
-      if (isset(xp::$registry['classloader.'.$class])) return xp::reflect($class);
+      if (isset(xp::$cl[$class])) return xp::reflect($class);
       
       // Ask delegates
       foreach (self::$delegates as $delegate) {

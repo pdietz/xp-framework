@@ -175,7 +175,17 @@ anotherkey="is there, too"
      */
     #[@test]
     public function readStringReturnsDefaultOnNoOccurrance() {
-      $this->assertEquals('Hello World', $this->fixture()->readString('section', 'str3', 'Hello World'));
+      $this->assertEquals('Hello World', $this->fixture()->readString('section', 'non-existant-key', 'Hello World'));
+    }
+
+    /**
+     * Test
+     *
+     * @see   https://github.com/xp-framework/xp-framework/issues/302
+     */
+    #[@test]
+    public function readStringDefaultForDefault() {
+      $this->assertEquals('', $this->fixture()->readString('section', 'non-existant-key'));
     }
 
     /**
@@ -202,7 +212,16 @@ anotherkey="is there, too"
      */
     #[@test]
     public function readBooleanUsesDefaultOnNoOccurrance() {
-      $this->assertEquals('Hello.', $this->fixture()->readBool('section', 'b3', 'Hello.'));
+      $this->assertEquals(TRUE, $this->fixture()->readBool('section', 'non-existant-key', TRUE));
+    }
+
+    /**
+     * Test
+     *
+     */
+    #[@test]
+    public function readBooleanUsesFalseForDefaultOnNoOccurrance() {
+      $this->assertEquals(FALSE, $this->fixture()->readBool('section', 'b3'));
     }
 
     /**
@@ -229,7 +248,16 @@ anotherkey="is there, too"
      */
     #[@test]
     public function readArrayUsesDefaultOnNoOccurrance() {
-      $this->assertEquals('Hello.', $this->fixture()->readArray('section', 'arr4', 'Hello.'));
+      $this->assertEquals(array(1, 2, 3), $this->fixture()->readArray('section', 'non-existant-key', array(1, 2, 3)));
+    }
+
+    /**
+     * Test
+     *
+     */
+    #[@test]
+    public function readArrayUsesEmptyArrayDefaultOnNoOccurrance() {
+      $this->assertEquals(array(), $this->fixture()->readArray('section', 'non-existant-key'));
     }
 
     /**
@@ -273,6 +301,15 @@ anotherkey="is there, too"
      *
      */
     #[@test]
+    public function readHashUsesNullForDefaultOnNoOccurrance() {
+      $this->assertEquals(NULL, $this->fixture()->readHash('section', 'hash3'));
+    }
+
+    /**
+     * Test
+     *
+     */
+    #[@test]
     public function readIntegerUsesFirst() {
       $this->assertEquals(5, $this->fixture()->readInteger('section', 'int1'));
     }
@@ -292,7 +329,16 @@ anotherkey="is there, too"
      */
     #[@test]
     public function readIntegerUsesDefaultOnNoOccurrance() {
-      $this->assertEquals('Hello.', $this->fixture()->readInteger('section', 'int3', 'Hello.'));
+      $this->assertEquals(-1, $this->fixture()->readInteger('section', 'non-existant-key', -1));
+    }
+
+    /**
+     * Test
+     *
+     */
+    #[@test]
+    public function readIntegerUsesZeroForDefaultOnNoOccurrance() {
+      $this->assertEquals(0, $this->fixture()->readInteger('section', 'non-existant-key'));
     }
 
     /**
@@ -319,7 +365,16 @@ anotherkey="is there, too"
      */
     #[@test]
     public function readFloatUsesDefaultOnNoOccurrance() {
-      $this->assertEquals('Hello.', $this->fixture()->readFloat('section', 'float3', 'Hello.'));
+      $this->assertEquals(-1.0, $this->fixture()->readFloat('section', 'non-existant-key', -1.0));
+    }
+
+    /**
+     * Test
+     *
+     */
+    #[@test]
+    public function readFloatUsesZeroDefaultOnNoOccurrance() {
+      $this->assertEquals(0.0, $this->fixture()->readFloat('section', 'non-existant-key'));
     }
 
     /**
@@ -346,7 +401,16 @@ anotherkey="is there, too"
      */
     #[@test]
     public function readRangeUsesDefaultOnNoOccurrance() {
-      $this->assertEquals('Hello.', $this->fixture()->readRange('section', 'range3', 'Hello.'));
+      $this->assertEquals(array(1, 2, 3), $this->fixture()->readRange('section', 'non-existant-key', array(1, 2, 3)));
+    }
+
+    /**
+     * Test
+     *
+     */
+    #[@test]
+    public function readRangeUsesEmptyArrayForDefaultOnNoOccurrance() {
+      $this->assertEquals(array(), $this->fixture()->readRange('section', 'non-existant-key'));
     }
 
     /**
@@ -368,6 +432,15 @@ anotherkey="is there, too"
     #[@test]
     public function readSectionThatDoesNotExistReturnsDefault() {
       $this->assertEquals(array('default' => 'value'), $this->fixture()->readSection('doesnotexist', array('default' => 'value')));
+    }
+
+    /**
+     * Test
+     *
+     */
+    #[@test]
+    public function readSectionThatDoesNotExistReturnsEmptyArrayPerDefault() {
+      $this->assertEquals(array(), $this->fixture()->readSection('doesnotexist'));
     }
 
     /**
